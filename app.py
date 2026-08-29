@@ -115,7 +115,7 @@ def unique_elements(elements):
 
 
 def element_contains(parent, child):
-    # ���用浏览器的 contains 判断 DOM 层级，避免 Python 对象等价比较不可靠
+    # ，用浏览器的 contains 判断 DOM 层级，避免 Python 对象等价比较不可靠
     try:
         driver = getattr(parent, '_parent', None) or getattr(child, '_parent', None)
         if driver:
@@ -318,7 +318,7 @@ def extract_duration_like(text):
         if re.search(r'expires\s+in|剩余|还有', line, re.I) and idx + 1 < len(lines):
             candidate = lines[idx + 1]
             if extract_date_like(candidate) or re.search(r'\d', candidate):
-                # “Expires in”标签单独占一行，时长值在下一行，去掉标签只保留数值
+                # "Expires in"标签单独占一行，时长值在下一行，去掉标签只保留数值
                 return re.sub(r'^(?:expires\s*in|剩余|还有)\s*[:：]?\s*', '', candidate, flags=re.I).strip()
 
     match = re.search(
@@ -869,6 +869,44 @@ def fill_input(sb, selector, value, label, timeout=15):
     return entered_value == value
 
 
+def get_login_error_message(sb):
+    """提取登录页面的错误信息"""
+    error_selectors = [
+        '.auth-error-text',
+        '.alert-danger',
+        '.error-message',
+        '[class*="error"]',
+        '[role="alert"]',
+        '.form-error',
+    ]
+    
+    for selector in error_selectors:
+        try:
+            elements = sb.driver.find_elements(By.CSS_SELECTOR, selector)
+            for elem in elements:
+                if elem.is_displayed():
+                    text = elem.text.strip()
+                    if text:
+                        return text
+        except Exception:
+            continue
+    
+    # 尝试从 body 文本中提取错误信息
+    try:
+        body = sb.driver.find_element(By.TAG_NAME, 'body')
+        text = body.text.strip()
+        # 查找可能的错误关键词
+        if '错误' in text or 'error' in text.lower() or 'invalid' in text.lower():
+            lines = [line for line in text.split('\n') if line.strip()]
+            for line in lines[:10]:  # 只查看前10行
+                if any(keyword in line.lower() for keyword in ['error', 'invalid', '错误', '失败']):
+                    return line.strip()
+    except Exception:
+        pass
+    
+    return ''
+
+
 def login(sb, email, password):
     """执行登录，返回是否成功"""
     print("开始登录流程...")
@@ -892,6 +930,9 @@ def login(sb, email, password):
         captcha_ok = click_captcha_checkbox(sb, '登录验证码')
         if not captcha_ok:
             print("⚠️ 登录验证码未完成，暂不点击登录按钮，避免直接提交。")
+            error_msg = get_login_error_message(sb)
+            if error_msg:
+                print(f"登录页错误信息: {error_msg}")
             return False
     else:
         print("登录页未检测到验证码，跳过验证码流程。")
@@ -915,6 +956,7 @@ def login(sb, email, password):
             break
         except Exception as e:
             print(f"选择器 {selector} 失败: {e}")
+    
     if not clicked:
         print("所有选择器失败，使用 JS 点击")
         sb.execute_script('''
@@ -927,6 +969,9 @@ def login(sb, email, password):
             }
             return false;
         ''')
+
+    # ---- 增加等待时间，让登录请求充分处理 ----
+    sb.sleep(3)  # 增加至 3 秒，给服务器更多时间处理
 
     # ---- 等待登录结果 ----
     try:
@@ -963,17 +1008,19 @@ def login(sb, email, password):
                 print(f"✅ 登录后 URL: {current_url}，标题: {title}（未匹配严格标题，但已离开登录页）")
             return True
         else:
-            # 提取错误信息
-            error_msg = ""
-            try:
-                errors = sb.driver.find_elements(By.CSS_SELECTOR, '.auth-error-text, .alert-danger, .error-message')
-                error_msg = errors[0].text.strip() if errors else ''
-            except Exception:
-                pass
+            # 提取错误信息 - 加强错误消息提取
+            error_msg = get_login_error_message(sb)
+            if not error_msg:
+                error_msg = "未知错误 (可能是网络问题或页面不兼容)"
             print(f"❌ 登录失败，错误: {error_msg}")
+            print(f"当前 URL: {current_url}")
+            print(f"页面标题: {title}")
             return False
     except Exception as e:
         print(f"登录过程异常: {e}")
+        error_msg = get_login_error_message(sb)
+        if error_msg:
+            print(f"页面错误信息: {error_msg}")
         return False
     
 # 获取当前出口ip
