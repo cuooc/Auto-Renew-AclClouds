@@ -12,12 +12,13 @@ from selenium.webdriver.common.by import By
 from zoneinfo import ZoneInfo
 
 # ----- 配置（从环境变量读取或在双引号内填写） -----
-EMAIL = os.getenv('EMAIL') or ""
-PASSWORD = os.getenv('PASSWORD') or ""
-TG_CHAT_ID = os.getenv('TG_CHAT_ID') or ""
-TG_BOT_TOKEN = os.getenv('TG_BOT_TOKEN') or ""
+EMAIL = os.getenv('EMAIL') or ""         # 邮箱必填
+PASSWORD = os.getenv('PASSWORD') or ""   # 密码必填
+TG_CHAT_ID = os.environ.get("TG_CHAT_ID") or ""  # CHAT_ID 可选
+TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN") or "" # BOT_TOKEN 可选
 
 LOGIN_PATH = '/auth/login'
+LOGIN_URL = f'https://aclclouds.com{LOGIN_PATH}'
 BASE_URL = 'https://dash.aclclouds.com'
 PROJECTS_URL = f'{BASE_URL}/dashboard/projects'
 
@@ -560,23 +561,38 @@ def handle_captcha_challenge(sb, label='验证码', timeout=20):
     option_selectors = [
         '.auth-captcha-option',
         '.auth-capcha-option',
-        './/button',
-        './/a',
-        './/div[@role="button"]',
+        '[class*="captcha-option"]',
+        '[class*="capcha-option"]',
+        'button',
+        'a',
+        '[role="button"]',
+        'img',
     ]
 
     def get_options(challenge_elem):
+        options = []
         for sel in option_selectors:
             try:
-                if sel.startswith('.') or sel.startswith('['):
-                    elems = challenge_elem.find_elements(By.CSS_SELECTOR, sel)
-                else:
-                    elems = challenge_elem.find_elements(By.XPATH, sel)
-                if elems:
-                    return [elem for elem in elems if elem.is_displayed() and elem.is_enabled()]
+                elems = challenge_elem.find_elements(By.CSS_SELECTOR, sel)
+                options.extend(elems)
             except Exception:
                 continue
-        return []
+
+        unique = []
+        seen = set()
+        for elem in options:
+            try:
+                if not elem.is_displayed() or not elem.is_enabled():
+                    continue
+                elem_id = getattr(elem, 'id', None)
+                if elem_id and elem_id in seen:
+                    continue
+                if elem_id:
+                    seen.add(elem_id)
+                unique.append(elem)
+            except Exception:
+                continue
+        return unique
 
     options = get_options(challenge)
     if not options:
@@ -799,13 +815,14 @@ def login(sb, email, password):
     if not fill_input(sb, '#password', password, '密码'):
         print("⚠️ 密码仍未能正确填入。")
 
+    sb.sleep(15) # 等待验证码加载
     # ---- 验证码 ----
     captcha_ok = click_captcha_checkbox(sb, '登录验证码')
     if not captcha_ok:
         print("⚠️ 登录验证码未完成，暂不点击登录按钮，避免直接提交。")
         return False
 
-    sb.sleep(1)
+    sb.sleep(2)
 
     # ---- 点击登录按钮 ----
     login_page_url = sb.get_current_url()
@@ -888,10 +905,9 @@ def main():
 
         sb.set_window_size(1366, 768)
 
-        if not is_login_page(sb):
-            sb.open(BASE_URL)
-            sb.wait_for_ready_state_complete()
-            time.sleep(2)
+        sb.open(LOGIN_URL)
+        sb.wait_for_ready_state_complete()
+        time.sleep(2)
 
         if is_login_page(sb):
             print("执行正常登录...")
